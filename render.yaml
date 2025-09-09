@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: flowmind-backend
+    env: python
+    plan: free
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: cd backend && gunicorn -k uvicorn.workers.UvicornWorker app.main:app --bind 0.0.0.0:$PORT
+    envVars:
+      - key: DATABASE_URL
+        value: sqlite:///./genai.db
+      - key: CHROMA_PERSIST_DIR
+        value: ./chroma_db
+      - key: CHROMA_COLLECTION
+        value: kb_collection
+      - key: PYTHONPATH
+        value: /opt/render/project/src/backend
