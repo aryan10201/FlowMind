@@ -15,6 +15,8 @@
 
 </div>
 
+The Backend is hosted on render and frontend on Vercel
+It may take some time to load, please be patient
 ---
 
 ## 🌟 Overview
