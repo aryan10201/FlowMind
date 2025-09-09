@@ -1,0 +1,15 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+psycopg2-binary
+pydantic
+python-dotenv
+chromadb
+openai>=1.0.0
+requests
+python-multipart
+PyMuPDF
+aiofiles
+alembic
+loguru
+google-generativeai
