@@ -13,8 +13,35 @@ router = APIRouter()
 
 @router.post("/workflows", tags=["workflow"])
 def create_workflow(defn: WorkflowDefinition):
-    # For empty workflows (initial creation), skip validation
-    if not defn.nodes or len(defn.nodes) == 0:
+    try:
+        logger.info(f"Creating workflow: name='{defn.name}', nodes={len(defn.nodes)}, edges={len(defn.edges)}")
+        
+        # For empty workflows (initial creation), skip validation
+        if not defn.nodes or len(defn.nodes) == 0:
+            db = SessionLocal()
+            try:
+                wf = Workflow(name=defn.name, description=defn.description or "", definition=json.dumps({"nodes":defn.nodes, "edges": defn.edges}))
+                db.add(wf)
+                db.commit()
+                db.refresh(wf)
+                return {"workflow_id": wf.id, "message": "Workflow created successfully"}
+            except Exception as e:
+                db.rollback()
+                raise HTTPException(status_code=500, detail=f"Failed to create workflow: {str(e)}")
+            finally:
+                db.close()
+        
+        # For workflows with nodes, validate structure
+        is_valid, errors = validate_workflow(defn.nodes, defn.edges)
+        if not is_valid:
+            raise HTTPException(status_code=400, detail=f"Workflow validation failed: {'; '.join(errors)}")
+        
+        # Validate individual node configurations
+        for node in defn.nodes:
+            node_valid, node_errors = validate_node_configuration(node)
+            if not node_valid:
+                raise HTTPException(status_code=400, detail=f"Node {node.get('id', 'unknown')} validation failed: {'; '.join(node_errors)}")
+        
         db = SessionLocal()
         try:
             wf = Workflow(name=defn.name, description=defn.description or "", definition=json.dumps({"nodes":defn.nodes, "edges": defn.edges}))
@@ -27,30 +54,11 @@ def create_workflow(defn: WorkflowDefinition):
             raise HTTPException(status_code=500, detail=f"Failed to create workflow: {str(e)}")
         finally:
             db.close()
-    
-    # For workflows with nodes, validate structure
-    is_valid, errors = validate_workflow(defn.nodes, defn.edges)
-    if not is_valid:
-        raise HTTPException(status_code=400, detail=f"Workflow validation failed: {'; '.join(errors)}")
-    
-    # Validate individual node configurations
-    for node in defn.nodes:
-        node_valid, node_errors = validate_node_configuration(node)
-        if not node_valid:
-            raise HTTPException(status_code=400, detail=f"Node {node.get('id', 'unknown')} validation failed: {'; '.join(node_errors)}")
-    
-    db = SessionLocal()
-    try:
-        wf = Workflow(name=defn.name, description=defn.description or "", definition=json.dumps({"nodes":defn.nodes, "edges": defn.edges}))
-        db.add(wf)
-        db.commit()
-        db.refresh(wf)
-        return {"workflow_id": wf.id, "message": "Workflow created successfully"}
+    except HTTPException:
+        raise
     except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to create workflow: {str(e)}")
-    finally:
-        db.close()
+        logger.exception(f"Unexpected error creating workflow: {e}")
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
 @router.post("/workflows/{workflow_id}/execute", tags=["workflow"])
 async def run_workflow(workflow_id: int, req: dict):

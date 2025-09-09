@@ -36,7 +36,8 @@ export default function App() {
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.detail || 'Failed to create workflow');
+        console.error('Workflow creation error:', errorData);
+        throw new Error(errorData.detail || errorData.message || 'Failed to create workflow');
       }
 
       const data = await response.json();

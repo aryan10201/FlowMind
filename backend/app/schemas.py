@@ -10,7 +10,7 @@ class UploadResponse(BaseModel):
 class WorkflowDefinition(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     description: Optional[str] = Field("", max_length=500)
-    nodes: List[Dict[str, Any]] = Field(..., min_items=1)
+    nodes: List[Dict[str, Any]] = Field(default_factory=list)  # Allow empty for initial creation
     edges: List[Dict[str, Any]] = Field(default_factory=list)
     
     @validator('name')

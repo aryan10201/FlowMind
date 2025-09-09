@@ -40,6 +40,11 @@ async def health_check():
         "version": "1.0.0"
     }
 
+# Favicon endpoint to prevent 404 errors
+@app.get("/favicon.ico")
+async def favicon():
+    return {"message": "No favicon available"}
+
 # Initialize database
 try:
     Base.metadata.create_all(bind=engine)
