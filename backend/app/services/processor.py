@@ -66,22 +66,22 @@ def store_document_in_chroma(filename: str, text: str, metadata: dict = None,
                            embedding_provider: str = "openai", embedding_api_key: str = None, 
                            embedding_model: str = None):
     """Store document in ChromaDB with memory optimization"""
-    chunks = chunk_text(text, chunk_size=1000, overlap=200)
-    
-    if not chunks:
-        logger.warning("No chunks to store")
-        return {"stored_chunks": 0}
-    
-    # Limit number of chunks to prevent memory issues
-    max_chunks = 200
-    if len(chunks) > max_chunks:
-        logger.warning(f"Document has {len(chunks)} chunks, limiting to {max_chunks} to prevent memory issues")
-        chunks = chunks[:max_chunks]
-    
-    ids = [f"{uuid.uuid4()}" for _ in chunks]
-    metadatas = [{"source": filename, "chunk_idx": idx, **(metadata or {})} for idx in range(len(chunks))]
-    
     try:
+        chunks = chunk_text(text, chunk_size=1000, overlap=200)
+        
+        if not chunks:
+            logger.warning("No chunks to store")
+            return {"stored_chunks": 0}
+        
+        # Limit number of chunks to prevent memory issues
+        max_chunks = 200
+        if len(chunks) > max_chunks:
+            logger.warning(f"Document has {len(chunks)} chunks, limiting to {max_chunks} to prevent memory issues")
+            chunks = chunks[:max_chunks]
+        
+        ids = [f"{uuid.uuid4()}" for _ in chunks]
+        metadatas = [{"source": filename, "chunk_idx": idx, **(metadata or {})} for idx in range(len(chunks))]
+        
         # Process embeddings in smaller batches to avoid memory issues
         batch_size = 50  # Process 50 chunks at a time
         all_embeddings = []
@@ -89,16 +89,33 @@ def store_document_in_chroma(filename: str, text: str, metadata: dict = None,
         for i in range(0, len(chunks), batch_size):
             batch_chunks = chunks[i:i + batch_size]
             
-            if embedding_api_key and embedding_provider:
-                batch_embeddings = embed_texts_with_provider(embedding_api_key, batch_chunks, embedding_provider, embedding_model)
-            else:
-                batch_embeddings = embed_texts(batch_chunks)
-            
-            all_embeddings.extend(batch_embeddings)
-            
-            # Clear batch from memory
-            batch_chunks = None
-            batch_embeddings = None
+            try:
+                if embedding_api_key and embedding_provider:
+                    batch_embeddings = embed_texts_with_provider(embedding_api_key, batch_chunks, embedding_provider, embedding_model)
+                else:
+                    batch_embeddings = embed_texts(batch_chunks)
+                
+                if batch_embeddings and len(batch_embeddings) > 0:
+                    all_embeddings.extend(batch_embeddings)
+                else:
+                    logger.warning(f"Empty embeddings for batch {i//batch_size + 1}")
+                    # Create zero embeddings as fallback
+                    zero_embeddings = [[0.0] * 1536 for _ in batch_chunks]  # 1536 is common embedding dimension
+                    all_embeddings.extend(zero_embeddings)
+                
+                # Clear batch from memory
+                batch_chunks = None
+                batch_embeddings = None
+                
+            except Exception as e:
+                logger.error(f"Error processing batch {i//batch_size + 1}: {e}")
+                # Create zero embeddings as fallback
+                zero_embeddings = [[0.0] * 1536 for _ in batch_chunks]
+                all_embeddings.extend(zero_embeddings)
+        
+        if len(all_embeddings) != len(chunks):
+            logger.error(f"Embedding count mismatch: {len(all_embeddings)} vs {len(chunks)}")
+            return {"stored_chunks": 0, "error": "Embedding generation failed"}
         
         coll = get_or_create_collection(CHROMA_COLLECTION)
         coll.add(documents=chunks, metadatas=metadatas, ids=ids, embeddings=all_embeddings)

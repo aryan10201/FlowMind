@@ -39,7 +39,7 @@ def embed_texts_with_key(api_key: str, texts: list, model: str = None):
         raise
 
 def embed_texts_gemini(api_key: str, texts: list, model: str = "models/embedding-001"):
-    """Create embeddings using Google Gemini API"""
+    """Create embeddings using Google Gemini API with improved timeout handling"""
     if not texts:
         return []
     if not api_key:
@@ -48,14 +48,61 @@ def embed_texts_gemini(api_key: str, texts: list, model: str = "models/embedding
     try:
         genai.configure(api_key=api_key)
         embeddings = []
-        for text in texts:
-            result = genai.embed_content(
-                model=model,
-                content=text,
-                task_type="retrieval_document"
-            )
-            embeddings.append(result['embedding'])
+        
+        for i, text in enumerate(texts):
+            max_retries = 2  # Reduced retries to fail faster
+            retry_delay = 2  # Increased delay between retries
+            
+            for attempt in range(max_retries):
+                try:
+                    import time
+                    start_time = time.time()
+                    
+                    # Set a shorter timeout for individual requests
+                    result = genai.embed_content(
+                        model=model,
+                        content=text,
+                        task_type="retrieval_document"
+                    )
+                    
+                    # Check if we got a valid response
+                    if result and 'embedding' in result:
+                        embeddings.append(result['embedding'])
+                        break
+                    else:
+                        raise Exception("Invalid response from Gemini API")
+                        
+                except Exception as e:
+                    error_msg = str(e)
+                    
+                    # Check for timeout errors
+                    if "DeadlineExceeded" in error_msg or "504" in error_msg or "timeout" in error_msg.lower():
+                        if attempt < max_retries - 1:
+                            logger.warning(f"Gemini API timeout for text {i+1}, retry {attempt + 1}/{max_retries}")
+                            time.sleep(retry_delay)
+                            continue
+                        else:
+                            raise Exception("Gemini API timeout. The service is currently slow or unavailable. Please try again in a few minutes.")
+                    
+                    # Check for rate limiting
+                    elif "429" in error_msg or "quota" in error_msg.lower():
+                        if attempt < max_retries - 1:
+                            logger.warning(f"Gemini API rate limited for text {i+1}, retry {attempt + 1}/{max_retries}")
+                            time.sleep(retry_delay * 2)
+                            continue
+                        else:
+                            raise Exception("Gemini API rate limit exceeded. Please try again later.")
+                    
+                    # Other errors - fail immediately
+                    else:
+                        raise Exception(f"Gemini API error: {error_msg}")
+            
+            # If we get here without breaking, it means all retries failed
+            if len(embeddings) == i:
+                raise Exception(f"Failed to get embedding for text {i+1} after {max_retries} attempts")
+        
         return embeddings
+        
     except Exception as e:
         logger.exception("Gemini embedding error")
         raise

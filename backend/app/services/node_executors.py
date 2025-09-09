@@ -33,6 +33,11 @@ async def exec_knowledgebase(node: Dict[str, Any], inputs: Dict[str, Any], conte
         raise Exception("Text Embedding API key not provided for Knowledge Base")
     
     query = inputs.get("query")
+    if not query or not query.strip():
+        if session_id:
+            await ws_manager.send(session_id, {"type":"log","message":f"[{node['id']}] No query provided to Knowledge Base"})
+        return {"context": "", "kb_docs": []}
+    
     top_k = int(node.get("data", {}).get("config", {}).get("top_k", 5))
     coll_name = node.get("data", {}).get("config", {}).get("collection_name", CHROMA_COLLECTION)
     
@@ -102,8 +107,25 @@ async def exec_knowledgebase(node: Dict[str, Any], inputs: Dict[str, Any], conte
     
     # Use the provided API key for embeddings with the selected provider
     from ..core.embeddings import embed_texts_with_provider
+    emb = None
     try:
-        emb = await _run_blocking(embed_texts_with_provider, embedding_api_key, [query], embedding_provider, embedding_model)
+        # Add a timeout wrapper to prevent hanging
+        import asyncio
+        emb = await asyncio.wait_for(
+            _run_blocking(embed_texts_with_provider, embedding_api_key, [query], embedding_provider, embedding_model),
+            timeout=10.0  # 10 second timeout for embedding calls
+        )
+        
+        # Validate embeddings
+        if not emb or len(emb) == 0 or not emb[0]:
+            if session_id:
+                await ws_manager.send(session_id, {"type":"log","message":f"[{node['id']}] Empty embeddings received from {embedding_provider}"})
+            emb = None
+    except asyncio.TimeoutError:
+        error_msg = "Embedding request timed out after 10 seconds. The Gemini API may be slow or unavailable. Please try again."
+        if session_id:
+            await ws_manager.send(session_id, {"type":"error","message": error_msg})
+        raise Exception(error_msg)
     except Exception as e:
         error_msg = str(e)
         if "401" in error_msg or "AuthenticationError" in error_msg or "invalid_api_key" in error_msg:
@@ -116,6 +138,8 @@ async def exec_knowledgebase(node: Dict[str, Any], inputs: Dict[str, Any], conte
                 error_msg = "API key doesn't have permission for Gemini embeddings. Please check your Gemini API key permissions."
             else:
                 error_msg = "API key doesn't have permission for OpenAI embeddings. Please check your OpenAI API key permissions."
+        elif "timeout" in error_msg.lower() or "deadline" in error_msg.lower() or "504" in error_msg:
+            error_msg = f"Gemini API timeout. The service may be temporarily unavailable. Please try again in a few minutes or check your internet connection."
         else:
             error_msg = f"Embedding error ({embedding_provider}): {error_msg}"
         
@@ -124,32 +148,57 @@ async def exec_knowledgebase(node: Dict[str, Any], inputs: Dict[str, Any], conte
             await ws_manager.send(session_id, {"type":"error","message": error_msg})
         raise Exception(error_msg)
     
-    if not emb:
+    if not emb or len(emb) == 0:
         docs = []
         if session_id:
             await ws_manager.send(session_id, {"type":"log","message":f"[{node['id']}] No embeddings generated for query"})
     else:
-        client = get_or_create_collection(coll_name)
-        q_emb = emb[0]
-        
-        if session_id:
-            await ws_manager.send(session_id, {"type":"log","message":f"[{node['id']}] Querying ChromaDB with {len(q_emb)}-dim embedding"})
-        
-        res = await _run_blocking(client.query, query_embeddings=[q_emb], n_results=top_k, include=["documents","metadatas"])
-        docs = []
-        if isinstance(res, dict) and "documents" in res:
-            for dlist in res["documents"]:
-                docs.extend(dlist)
-        else:
-            try:
-                docs = res[0]["documents"]
-            except Exception:
+        try:
+            client = get_or_create_collection(coll_name)
+            q_emb = emb[0]
+            
+            if session_id:
+                await ws_manager.send(session_id, {"type":"log","message":f"[{node['id']}] Querying ChromaDB with {len(q_emb)}-dim embedding"})
+            
+            # Check if collection has any documents
+            collection_count = client.count()
+            if collection_count == 0:
+                if session_id:
+                    await ws_manager.send(session_id, {"type":"log","message":f"[{node['id']}] ChromaDB collection is empty, no documents to search"})
                 docs = []
-        
-        if session_id:
-            await ws_manager.send(session_id, {"type":"log","message":f"[{node['id']}] ChromaDB query returned {len(docs)} documents"})
+            else:
+                res = await _run_blocking(client.query, query_embeddings=[q_emb], n_results=top_k, include=["documents","metadatas"])
+                docs = []
+                
+                # Handle different response formats from ChromaDB
+                if isinstance(res, dict):
+                    if "documents" in res and res["documents"]:
+                        # Flatten the documents array
+                        for doc_list in res["documents"]:
+                            if isinstance(doc_list, list):
+                                docs.extend(doc_list)
+                            else:
+                                docs.append(doc_list)
+                elif isinstance(res, list) and len(res) > 0:
+                    # Handle list response format
+                    if "documents" in res[0]:
+                        docs = res[0]["documents"]
+                    else:
+                        docs = res
+                
+                if session_id:
+                    await ws_manager.send(session_id, {"type":"log","message":f"[{node['id']}] ChromaDB query returned {len(docs)} documents"})
+                    
+        except Exception as e:
+            if session_id:
+                await ws_manager.send(session_id, {"type":"log","message":f"[{node['id']}] ChromaDB query error: {str(e)}"})
+            logger.error(f"ChromaDB query error: {e}")
+            docs = []
     
-    kb_context = "\n\n".join(docs)
+    # Filter out empty documents
+    docs = [doc for doc in docs if doc and doc.strip()]
+    
+    kb_context = "\n\n".join(docs) if docs else ""
     if session_id:
         await ws_manager.send(session_id, {"type":"log","message":f"[{node['id']}] KB retrieved {len(docs)} chunks, context length: {len(kb_context)} chars"})
     
