@@ -34,7 +34,7 @@ export default function LLMNode({ data, onDelete }) {
       <div className="flex items-center justify-between mb-3 node-header">
         <div className="flex items-center gap-2 node-title cursor-pointer">
           <Cpu className="text-purple-600 w-5 h-5" />
-          <span className="font-semibold text-purple-700">LLM (OpenAI)</span>
+          <span className="font-semibold text-purple-700">LLM ({localConfig.provider || 'OpenAI'})</span>
         </div>
         {onDelete && (
           <button

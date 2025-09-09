@@ -148,14 +148,23 @@ export default function ChatModal({ onClose, workflowId, nodes = [] }) {
           nodeConfigs[node.id] = node.data.config;
           
           // Collect different types of API keys
-          if (node.data.config.api_key) {
-            if (node.type === 'knowledgebase') {
-              apiKeys.openai = node.data.config.api_key;
-              if (node.data.config.embedding_api_key) {
-                apiKeys.embedding = node.data.config.embedding_api_key;
+          if (node.type === 'knowledgebase') {
+            // For knowledge base, collect embedding API key
+            if (node.data.config.embedding_api_key) {
+              apiKeys.embedding = node.data.config.embedding_api_key;
+            }
+          } else if (node.type === 'llm') {
+            // For LLM, collect the main API key
+            if (node.data.config.api_key) {
+              // Use the provider to determine which key to use
+              const provider = node.data.config.provider || 'openai';
+              if (provider === 'gemini') {
+                apiKeys.gemini = node.data.config.api_key;
+              } else if (provider === 'grok') {
+                apiKeys.grok = node.data.config.api_key;
+              } else {
+                apiKeys.openai = node.data.config.api_key;
               }
-            } else if (node.type === 'llm') {
-              apiKeys.openai = node.data.config.api_key;
             }
           }
           

@@ -43,7 +43,23 @@ def stream_chat_openai(system_prompt: str, user_prompt: str, temperature: float 
             stream=True
         )
         final_text = ""
+        chunk_count = 0
+        max_chunks = 1000  # Safety limit to prevent infinite loops
+        import time
+        start_time = time.time()
+        max_duration = 30  # 30 second timeout
+        
         for chunk in resp:
+            # Safety checks to prevent infinite loops
+            chunk_count += 1
+            if chunk_count > max_chunks:
+                logger.warning("OpenAI streaming: Too many chunks, breaking")
+                break
+                
+            if time.time() - start_time > max_duration:
+                logger.warning("OpenAI streaming: Timeout reached, breaking")
+                break
+                
             try:
                 if chunk.choices and len(chunk.choices) > 0:
                     choice = chunk.choices[0]
@@ -123,7 +139,23 @@ def stream_chat_openai_with_client(client: OpenAI, system_prompt: str, user_prom
             stream=True
         )
         final_text = ""
+        chunk_count = 0
+        max_chunks = 1000  # Safety limit to prevent infinite loops
+        import time
+        start_time = time.time()
+        max_duration = 30  # 30 second timeout
+        
         for chunk in resp:
+            # Safety checks to prevent infinite loops
+            chunk_count += 1
+            if chunk_count > max_chunks:
+                logger.warning("OpenAI streaming: Too many chunks, breaking")
+                break
+                
+            if time.time() - start_time > max_duration:
+                logger.warning("OpenAI streaming: Timeout reached, breaking")
+                break
+                
             try:
                 if chunk.choices and len(chunk.choices) > 0:
                     choice = chunk.choices[0]
@@ -213,7 +245,23 @@ def stream_chat_grok(api_key: str, system_prompt: str, user_prompt: str, tempera
         response.raise_for_status()
         
         final_text = ""
+        line_count = 0
+        max_lines = 1000  # Safety limit to prevent infinite loops
+        import time
+        start_time = time.time()
+        max_duration = 30  # 30 second timeout
+        
         for line in response.iter_lines():
+            # Safety checks to prevent infinite loops
+            line_count += 1
+            if line_count > max_lines:
+                logger.warning("Grok streaming: Too many lines, breaking")
+                break
+                
+            if time.time() - start_time > max_duration:
+                logger.warning("Grok streaming: Timeout reached, breaking")
+                break
+                
             if line:
                 line = line.decode('utf-8')
                 if line.startswith('data: '):
@@ -270,6 +318,7 @@ def stream_chat_gemini(api_key: str, system_prompt: str, user_prompt: str, tempe
     """Stream chat with Gemini API"""
     try:
         import google.generativeai as genai
+        import time
         
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel('gemini-1.5-flash')
@@ -287,7 +336,22 @@ def stream_chat_gemini(api_key: str, system_prompt: str, user_prompt: str, tempe
         )
         
         final_text = ""
+        chunk_count = 0
+        max_chunks = 1000  # Safety limit to prevent infinite loops
+        start_time = time.time()
+        max_duration = 30  # 30 second timeout
+        
         for chunk in response:
+            # Safety checks to prevent infinite loops
+            chunk_count += 1
+            if chunk_count > max_chunks:
+                logger.warning("Gemini streaming: Too many chunks, breaking")
+                break
+                
+            if time.time() - start_time > max_duration:
+                logger.warning("Gemini streaming: Timeout reached, breaking")
+                break
+                
             if chunk.text:
                 final_text += chunk.text
                 yield {"type":"token", "delta": chunk.text}

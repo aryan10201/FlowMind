@@ -54,6 +54,7 @@ async def exec_knowledgebase(node: Dict[str, Any], inputs: Dict[str, Any], conte
             from ..services.processor import extract_text_from_pdf, store_document_in_chroma
             import io
             import base64
+            import asyncio
             
             # Handle base64 file data from frontend
             if isinstance(uploaded_file, dict) and 'content' in uploaded_file:
@@ -65,17 +66,18 @@ async def exec_knowledgebase(node: Dict[str, Any], inputs: Dict[str, Any], conte
                 file_contents = await uploaded_file.read()
                 filename = getattr(uploaded_file, 'name', 'uploaded_file.pdf')
             
-            # Extract text from PDF
-            text = extract_text_from_pdf(file_contents)
+            # Extract text from PDF with timeout
+            text = await asyncio.wait_for(
+                _run_blocking(extract_text_from_pdf, file_contents),
+                timeout=30.0  # 30 second timeout for PDF extraction
+            )
             
-            # Store in ChromaDB with the selected embedding provider
-            result = store_document_in_chroma(
-                filename, 
-                text, 
-                metadata={"description": f"Uploaded via Knowledge Base node {node['id']}"},
-                embedding_provider=embedding_provider,
-                embedding_api_key=embedding_api_key,
-                embedding_model=embedding_model
+            # Store in ChromaDB with the selected embedding provider with timeout
+            result = await asyncio.wait_for(
+                _run_blocking(store_document_in_chroma, filename, text, 
+                            {"description": f"Uploaded via Knowledge Base node {node['id']}"},
+                            embedding_provider, embedding_api_key, embedding_model),
+                timeout=60.0  # 60 second timeout for ChromaDB storage
             )
             
             if session_id:
@@ -85,6 +87,11 @@ async def exec_knowledgebase(node: Dict[str, Any], inputs: Dict[str, Any], conte
             if node["id"] in node_configs:
                 node_configs[node["id"]]["uploaded_file"] = None
             
+        except asyncio.TimeoutError:
+            error_msg = f"File processing timeout for {filename if 'filename' in locals() else 'uploaded file'}"
+            if session_id:
+                await ws_manager.send(session_id, {"type":"log","message":f"[{node['id']}] {error_msg}"})
+            logger.warning(error_msg)
         except Exception as e:
             if session_id:
                 await ws_manager.send(session_id, {"type":"log","message":f"[{node['id']}] File processing error: {str(e)}"})
@@ -112,7 +119,9 @@ async def exec_knowledgebase(node: Dict[str, Any], inputs: Dict[str, Any], conte
         else:
             error_msg = f"Embedding error ({embedding_provider}): {error_msg}"
         
-        # Don't send WebSocket error here - let the orchestrator handle it
+        # Send error via WebSocket if session_id exists
+        if session_id:
+            await ws_manager.send(session_id, {"type":"error","message": error_msg})
         raise Exception(error_msg)
     
     if not emb:
@@ -189,12 +198,20 @@ async def exec_llm(node: Dict[str, Any], inputs: Dict[str, Any], context: Dict[s
     node_configs = context.get("node_configs", {})
     api_keys = context.get("api_keys", {})
     
-    # Get API key from context or node config
-    api_key = api_keys.get("openai") or node_configs.get(node["id"], {}).get("api_key")
-    if not api_key:
-        raise Exception("OpenAI API key not provided")
-    
+    # Get API key from context or node config based on provider
     provider = node.get("data", {}).get("config", {}).get("provider", "openai")
+    
+    # Try to get API key from the appropriate provider key
+    if provider.lower() == "gemini":
+        api_key = api_keys.get("gemini") or node_configs.get(node["id"], {}).get("api_key")
+    elif provider.lower() == "grok":
+        api_key = api_keys.get("grok") or node_configs.get(node["id"], {}).get("api_key")
+    else:  # openai or default
+        api_key = api_keys.get("openai") or node_configs.get(node["id"], {}).get("api_key")
+    
+    if not api_key:
+        raise Exception(f"{provider.title()} API key not provided")
+    
     system_prompt = node.get("data", {}).get("config", {}).get("system_prompt", "You are a helpful assistant.")
     temperature = float(node.get("data", {}).get("config", {}).get("temperature", 0.2))
     max_tokens = int(node.get("data", {}).get("config", {}).get("max_tokens", 800))
@@ -268,12 +285,31 @@ async def exec_llm(node: Dict[str, Any], inputs: Dict[str, Any], context: Dict[s
         try:
             stream_iter = ask_llm_with_key(api_key, provider, streaming=True, system=system_prompt, prompt=prompt, temperature=temperature, max_tokens=max_tokens)
             final_text = ""
+            token_count = 0
+            max_tokens_limit = 5000  # Safety limit
+            import time
+            start_time = time.time()
+            max_duration = 60  # 60 second timeout for LLM streaming
+            
             for event in stream_iter:
+                # Safety checks to prevent infinite loops
+                if time.time() - start_time > max_duration:
+                    logger.warning(f"LLM streaming timeout after {max_duration}s, breaking")
+                    if session_id:
+                        await ws_manager.send(session_id, {"type":"log","message":f"[{node['id']}] LLM streaming timeout after {max_duration}s"})
+                    break
+                
                 if not isinstance(event, dict):
                     continue
                 if event.get("type") == "token":
                     token = event.get("delta", "")
                     final_text += token
+                    token_count += 1
+                    if token_count > max_tokens_limit:
+                        logger.warning(f"LLM streaming: Too many tokens ({token_count}), breaking")
+                        if session_id:
+                            await ws_manager.send(session_id, {"type":"log","message":f"[{node['id']}] LLM streaming: Too many tokens, breaking"})
+                        break
                     if session_id:
                         await ws_manager.send(session_id, {"type":"token", "node_id": node["id"], "token": token})
                 elif event.get("type") == "done":
@@ -287,7 +323,7 @@ async def exec_llm(node: Dict[str, Any], inputs: Dict[str, Any], context: Dict[s
                         await ws_manager.send(session_id, {"type":"error", "node_id": node["id"], "error": err})
                     raise Exception(err)
             if session_id:
-                await ws_manager.send(session_id, {"type":"log","message":f"[{node['id']}] LLM streaming complete (len={len(final_text)})"})
+                await ws_manager.send(session_id, {"type":"log","message":f"[{node['id']}] LLM streaming complete (len={len(final_text)}, tokens={token_count})"})
             return {"output": final_text}
         except Exception as e:
             logger.exception("Streaming LLM failed")
@@ -301,11 +337,18 @@ async def exec_llm(node: Dict[str, Any], inputs: Dict[str, Any], context: Dict[s
             else:
                 error_msg = f"LLM error ({provider}): {error_msg}"
             
-            # Don't send WebSocket error here - let the orchestrator handle it
+            # Send error via WebSocket if session_id exists
+            if session_id:
+                await ws_manager.send(session_id, {"type":"error","message": error_msg})
             raise Exception(error_msg)
     else:
         try:
-            text = ask_llm_with_key(api_key, provider, streaming=False, system=system_prompt, prompt=prompt, temperature=temperature, max_tokens=max_tokens)
+            # Add timeout for non-streaming calls
+            import asyncio
+            text = await asyncio.wait_for(
+                _run_blocking(ask_llm_with_key, api_key, provider, False, system=system_prompt, prompt=prompt, temperature=temperature, max_tokens=max_tokens),
+                timeout=60.0  # 60 second timeout
+            )
             if session_id:
                 await ws_manager.send(session_id, {"type":"log","message":f"[{node['id']}] LLM finished (non-streaming)"})
             return {"output": text}
@@ -321,7 +364,9 @@ async def exec_llm(node: Dict[str, Any], inputs: Dict[str, Any], context: Dict[s
             else:
                 error_msg = f"LLM error ({provider}): {error_msg}"
             
-            # Don't send WebSocket error here - let the orchestrator handle it
+            # Send error via WebSocket if session_id exists
+            if session_id:
+                await ws_manager.send(session_id, {"type":"error","message": error_msg})
             raise Exception(error_msg)
 
 async def exec_output(node, inputs, context):
