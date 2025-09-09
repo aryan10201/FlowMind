@@ -99,6 +99,7 @@ export default function KnowledgeBaseNode({ data, onDelete }) {
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Upload File</label>
+          <div className="text-xs text-gray-500 mb-1">Max file size: 10MB (to prevent memory issues)</div>
           <input
             type="file"
             accept=".pdf"
@@ -106,6 +107,15 @@ export default function KnowledgeBaseNode({ data, onDelete }) {
             onChange={async (e) => {
               if (e.target.files[0]) {
                 const file = e.target.files[0];
+                
+                // Check file size (limit to 10MB to prevent memory issues)
+                const maxSize = 10 * 1024 * 1024; // 10MB
+                if (file.size > maxSize) {
+                  alert(`File size (${(file.size / 1024 / 1024).toFixed(1)}MB) exceeds the 10MB limit. Please use a smaller file.`);
+                  e.target.value = ''; // Clear the input
+                  return;
+                }
+                
                 // Convert file to base64 for transmission
                 const reader = new FileReader();
                 reader.onload = () => {

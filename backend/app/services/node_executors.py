@@ -66,18 +66,18 @@ async def exec_knowledgebase(node: Dict[str, Any], inputs: Dict[str, Any], conte
                 file_contents = await uploaded_file.read()
                 filename = getattr(uploaded_file, 'name', 'uploaded_file.pdf')
             
-            # Extract text from PDF with timeout
+            # Extract text from PDF with shorter timeout
             text = await asyncio.wait_for(
                 _run_blocking(extract_text_from_pdf, file_contents),
-                timeout=30.0  # 30 second timeout for PDF extraction
+                timeout=15.0  # 15 second timeout for PDF extraction
             )
             
-            # Store in ChromaDB with the selected embedding provider with timeout
+            # Store in ChromaDB with the selected embedding provider with shorter timeout
             result = await asyncio.wait_for(
                 _run_blocking(store_document_in_chroma, filename, text, 
                             {"description": f"Uploaded via Knowledge Base node {node['id']}"},
                             embedding_provider, embedding_api_key, embedding_model),
-                timeout=60.0  # 60 second timeout for ChromaDB storage
+                timeout=30.0  # 30 second timeout for ChromaDB storage
             )
             
             if session_id:
