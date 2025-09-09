@@ -172,51 +172,10 @@
 - **🔍 Research Assistant**: Combine web search with AI analysis
 - **💬 Customer Support**: Create intelligent chatbots with knowledge bases
 
----
-
-## 📋 Assignment Deliverables
-
-### ✅ **Completed Requirements**
-- **Full source code** (frontend + backend) with clear component structure
-- **README** with setup and run instructions
-- **Modular design** with separate frontend and backend components
-- **Live deployment** with working demo
-- **Architecture diagram** showing system components
-
-### **Core Features Implemented**
-- **Visual Workflow Builder** using React Flow with drag-and-drop functionality
-- **Component Library Panel** with all four required components
-- **Workspace Panel** with zoom, pan, and snap-to-grid support
-- **Component Configuration Panel** with dynamic configuration options
-- **Real-time Execution** with WebSocket streaming and progress indicators
-- **Workflow Persistence** with PostgreSQL database storage
-- **Chat Interface** with follow-up question support
-
-### **Technical Implementation**
-- **Frontend**: React.js with modern hooks and functional components
-- **Backend**: FastAPI with automatic API documentation
-- **Database**: PostgreSQL for workflow and chat data persistence
-- **Vector Store**: ChromaDB for document embeddings and similarity search
-- **AI Integration**: OpenAI GPT, Gemini, and Grok support
-- **Document Processing**: PyMuPDF for PDF text extraction
-- **Web Search**: SERP API and Brave Search integration
-
----
-
-## 🎯 **Project Highlights**
-
-- **No-Code Interface**: Users can build complex AI workflows without programming
-- **Multi-LLM Support**: Flexible AI model selection (OpenAI, Gemini, Grok)
-- **Document Intelligence**: PDF processing with vector embeddings for semantic search
-- **Real-time Execution**: Live streaming of workflow execution with progress updates
-- **Production Ready**: Deployed and accessible with comprehensive error handling
-
----
-
 <div align="center">
 
 **Built for Full-Stack Engineering Internship Assignment**
 
-[🚀 Live Demo](https://flow-mind-beige.vercel.app/) • [📖 API Docs](https://flowmind-ikfc.onrender.com/docs#/) • [💻 Source Code](https://github.com/yourusername/flowmind)
+[🚀 Live Demo](https://flow-mind-beige.vercel.app/) • [📖 API Docs](https://flowmind-ikfc.onrender.com/docs#/) • [💻 Source Code](https://github.com/aryan10201/flowmind)
 
 </div>
