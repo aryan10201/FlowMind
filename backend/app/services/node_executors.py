@@ -225,22 +225,95 @@ async def exec_websearch(node: Dict[str, Any], inputs: Dict[str, Any], context: 
         raise Exception("SERP API key not provided")
     
     query = inputs.get("query")
+    if not query or not query.strip():
+        if session_id:
+            await ws_manager.send(session_id, {"type":"log","message":f"[{node['id']}] No query provided to Web Search"})
+        return {"web_results": [], "context": ""}
+    
     search_query = node.get("data", {}).get("config", {}).get("search_query") or query
     search_engine = node.get("data", {}).get("config", {}).get("search_engine", "google")
-    num_results = node.get("data", {}).get("config", {}).get("num_results", 5)
+    num_results = int(node.get("data", {}).get("config", {}).get("num_results", 5))
     
     if session_id:
         await ws_manager.send(session_id, {"type":"log","message":f"[{node['id']}] WebSearch for query: {search_query}"})
     
-    # TODO: Implement actual SERP API call
-    # For now, return mock results
-    results = [
-        f"Search result 1 for '{search_query}' from {search_engine}",
-        f"Search result 2 for '{search_query}' from {search_engine}",
-        f"Search result 3 for '{search_query}' from {search_engine}"
-    ]
-    
-    return {"web_results": results, "context": "\n".join(results)}
+    try:
+        # Implement actual SERP API call
+        import requests
+        import asyncio
+        
+        # Use SerpAPI for web search
+        url = "https://serpapi.com/search"
+        params = {
+            "api_key": serp_api_key,
+            "q": search_query,
+            "engine": search_engine,
+            "num": min(num_results, 10),  # Limit to 10 results max
+            "safe": "active"
+        }
+        
+        # Add timeout and error handling
+        response = await asyncio.wait_for(
+            _run_blocking(requests.get, url, params=params),
+            timeout=15.0  # 15 second timeout
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            results = []
+            
+            # Extract organic results
+            organic_results = data.get("organic_results", [])
+            for i, result in enumerate(organic_results[:num_results]):
+                title = result.get("title", "")
+                snippet = result.get("snippet", "")
+                link = result.get("link", "")
+                
+                if title and snippet:
+                    formatted_result = f"{i+1}. {title}\n   {snippet}\n   Source: {link}"
+                    results.append(formatted_result)
+            
+            if not results:
+                # Fallback to answer box or knowledge graph
+                answer_box = data.get("answer_box", {})
+                if answer_box.get("answer"):
+                    results.append(f"Answer: {answer_box['answer']}")
+                elif answer_box.get("snippet"):
+                    results.append(f"Info: {answer_box['snippet']}")
+                else:
+                    results.append(f"No specific results found for '{search_query}'")
+            
+            if session_id:
+                await ws_manager.send(session_id, {"type":"log","message":f"[{node['id']}] WebSearch found {len(results)} results"})
+            
+            return {"web_results": results, "context": "\n\n".join(results)}
+            
+        elif response.status_code == 401:
+            error_msg = "Invalid SERP API key. Please check your API key in the Web Search component."
+            if session_id:
+                await ws_manager.send(session_id, {"type":"error","message": error_msg})
+            raise Exception(error_msg)
+        elif response.status_code == 429:
+            error_msg = "SERP API rate limit exceeded. Please try again later."
+            if session_id:
+                await ws_manager.send(session_id, {"type":"error","message": error_msg})
+            raise Exception(error_msg)
+        else:
+            error_msg = f"SERP API error: HTTP {response.status_code}"
+            if session_id:
+                await ws_manager.send(session_id, {"type":"error","message": error_msg})
+            raise Exception(error_msg)
+            
+    except asyncio.TimeoutError:
+        error_msg = "Web search request timed out after 15 seconds"
+        if session_id:
+            await ws_manager.send(session_id, {"type":"error","message": error_msg})
+        raise Exception(error_msg)
+    except Exception as e:
+        error_msg = f"Web search error: {str(e)}"
+        if session_id:
+            await ws_manager.send(session_id, {"type":"error","message": error_msg})
+        raise Exception(error_msg)
 
 async def exec_llm(node: Dict[str, Any], inputs: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
     session_id = context.get("session_id")
@@ -331,6 +404,7 @@ async def exec_llm(node: Dict[str, Any], inputs: Dict[str, Any], context: Dict[s
         await ws_manager.send(session_id, {"type":"log","message":f"[{node['id']}] Final prompt: {prompt[:300]}..."})
 
     if streaming:
+        stream_iter = None
         try:
             stream_iter = ask_llm_with_key(api_key, provider, streaming=True, system=system_prompt, prompt=prompt, temperature=temperature, max_tokens=max_tokens)
             final_text = ""
@@ -371,6 +445,7 @@ async def exec_llm(node: Dict[str, Any], inputs: Dict[str, Any], context: Dict[s
                     if session_id:
                         await ws_manager.send(session_id, {"type":"error", "node_id": node["id"], "error": err})
                     raise Exception(err)
+            
             if session_id:
                 await ws_manager.send(session_id, {"type":"log","message":f"[{node['id']}] LLM streaming complete (len={len(final_text)}, tokens={token_count})"})
             return {"output": final_text}
@@ -390,6 +465,15 @@ async def exec_llm(node: Dict[str, Any], inputs: Dict[str, Any], context: Dict[s
             if session_id:
                 await ws_manager.send(session_id, {"type":"error","message": error_msg})
             raise Exception(error_msg)
+        finally:
+            # Cleanup streaming resources
+            if stream_iter:
+                try:
+                    # Close the stream iterator if it has a close method
+                    if hasattr(stream_iter, 'close'):
+                        stream_iter.close()
+                except Exception:
+                    pass
     else:
         try:
             # Add timeout for non-streaming calls
